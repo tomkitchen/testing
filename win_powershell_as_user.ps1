@@ -19,51 +19,6 @@
 # WANT_JSON
 # POWERSHELL_COMMON
 
-#######################################################################
-#                                                                     #
-# Fail-Json seems to output changed = $false regardless of if we have #
-# set this explicitly or not. Adding bool third parameter to          #
-# specify changed state. The original function is located at          #
-# ansible/lib/ansible/module_utils/powershell.ps1. I may send a PR    #
-# at some point                                                       #
-#                                                                     #
-#######################################################################
-
-# Helper function to add the "msg" property, "failed" property and "changed" property, convert the
-# powershell object to JSON and echo it, exiting the script
-# Example: Fail-Json $result "This is the failure message" $false
-Function Fail-Json{
-    param(
-        $obj,
-        [string]$message = "",
-        [bool]$changed = $false
-    )
-    # If the only arg was a string, create a new
-    # psobject and use the arg as the failure message
-    If ($message -eq "" -and $changed -eq $false -and $obj.GetType().Name -eq "String")
-    {
-        $message = $obj
-        $obj = New-Object psobject
-    }
-    # If the only arg was a boolean, create a new
-    # psobject and use the arg as the changed state
-    ElseIf ($message -eq "" -and $changed -eq $false -and $obj.GetType().Name -eq "Boolean")
-    {
-        $changed = $obj
-        $obj = New-Object psobject
-    }
-    # If the first arg is undefined or not an object, make it an object
-    ElseIf (-not $obj -or -not $obj.GetType -or $obj.GetType().Name -ne "PSCustomObject")
-    {
-        $obj = New-Object psobject
-    }
-    Set-Attr $obj "changed" $changed
-    Set-Attr $obj "msg" $message
-    Set-Attr $obj "failed" $true
-    echo $obj | ConvertTo-Json -Compress -Depth 99
-    Exit 1
-}
-
 $params = Parse-Args $args
 
 $scriptPath =  Get-AnsibleParam -obj $params -name 'ScriptPath' -failifempty $true
@@ -71,7 +26,7 @@ $arguments = Get-AnsibleParam -obj $params -name "Arguments"
 $user = Get-AnsibleParam -obj $params -name "User"
 $password = Get-AnsibleParam -obj $params -name "User" -no_log $true
 [System.Collections.ArrayList]$stdout = @()
-[PSCustomObject]$result = @{
+$result = New-Object psobject -Property @{
     changed = $false
     win_powershell_script_as_user = @{
         scriptpath = $scriptPath
@@ -81,7 +36,7 @@ $password = Get-AnsibleParam -obj $params -name "User" -no_log $true
         stdout_lines = $stdout
         logfile = ""
     }
-};
+}
 
 $taskName = "$((Get-Date).ticks)"
 $logFile = "$PSScriptRoot\$taskName.log"
@@ -90,7 +45,8 @@ try{
     $result.changed = $true
 }
 catch{
-    Fail-Json $result "Failed to create log file" $true
+    $result.changed = $true
+    Fail-Json $result "Failed to create log file"
 }
 try{
     $action = New-ScheduledTaskAction -Execute 'Powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -NonInteractive -c $scriptPath $arguments >> $logFile"
@@ -98,7 +54,7 @@ try{
     Start-ScheduledTask -TaskName $taskName
 }
 catch{
-    Fail-Json $result $_.Exception.Message $true
+    Fail-Json $result $_.Exception.Message
 }
 try{
     while((Get-ScheduledTask -TaskName $taskName).state -ne 'Ready'){
@@ -107,7 +63,7 @@ try{
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
 catch{
-    Fail-Json $result $_.Exception.Message $true
+    Fail-Json $result $_.Exception.Message
 }
 try{
     get-content $logFile | Where-Object{$_ -ne ""} | %{$stdout.add($_)}
@@ -120,6 +76,6 @@ try{
     }
 }
 catch{
-    Fail-Json $result "$_.Exception.Message" $true
+    Fail-Json $result "$_.Exception.Message"
 }
 Exit-Json $result
